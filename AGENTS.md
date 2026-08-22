@@ -1,7 +1,7 @@
 # GoTrustDeal Messaging Developer Rules
 
 This document defines mandatory guidelines and constraints for developers and AI agents working on the `gtd-messaging` codebase.
-
+for start application start-gtd-messaging.bat 
 ## 1. Architectural & Dependency Rules
 - **Infrastructure Scope**: `gtd-messaging` is shared infrastructure. Do not put microservice-specific business logic, email templates, or email delivery logic here. (Email/SMS microservice-specific delivery logic belongs in `gtd-message`).
 - **Strict Separation of Concerns**:

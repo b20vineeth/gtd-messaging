@@ -11,6 +11,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import software.amazon.awssdk.services.sns.SnsClient;
+import software.amazon.awssdk.services.sns.model.PublishRequest;
+import software.amazon.awssdk.services.sns.model.PublishResponse;
 import software.amazon.awssdk.services.sqs.SqsClient;
 import software.amazon.awssdk.services.sqs.model.GetQueueUrlRequest;
 import software.amazon.awssdk.services.sqs.model.GetQueueUrlResponse;
@@ -33,6 +36,9 @@ class SqsMessagePublisherTest {
     @Mock
     private SqsClient sqsClient;
 
+    @Mock
+    private SnsClient snsClient;
+
     private AwsMessagingProperties properties;
     private ObjectMapper objectMapper;
     private SqsMessagePublisher publisher;
@@ -42,7 +48,7 @@ class SqsMessagePublisherTest {
         properties = new AwsMessagingProperties();
         objectMapper = new ObjectMapper();
         objectMapper.registerModule(new JavaTimeModule()); // Support Java 8 Time APIs
-        publisher = new SqsMessagePublisher(sqsClient, properties, objectMapper);
+        publisher = new SqsMessagePublisher(sqsClient, snsClient, properties, objectMapper);
     }
 
     @Test
@@ -192,5 +198,41 @@ class SqsMessagePublisherTest {
 
         // Act & Assert
         assertThrows(DestinationResolutionException.class, () -> publisher.publish(destination, envelope));
+    }
+
+    @Test
+    void testPublish_WithConfiguredTopicArn() throws Exception {
+        // Arrange
+        String destination = "identity-events";
+        String topicArn = "arn:aws:sns:us-east-1:123456789012:identity-events";
+
+        AwsMessagingProperties.DestinationProperties destProps = new AwsMessagingProperties.DestinationProperties();
+        destProps.setTopicArn(topicArn);
+        properties.getDestinations().put(destination, destProps);
+
+        EventEnvelope<String> envelope = new EventEnvelope<>(
+                "evt-123",
+                "test.event.type",
+                1,
+                Instant.now(),
+                "test-service",
+                "correlation-id-abc",
+                "causation-id-xyz",
+                "Hello SNS Payload"
+        );
+
+        when(snsClient.publish(any(PublishRequest.class)))
+                .thenReturn(PublishResponse.builder().messageId("sns-msg-123").build());
+
+        // Act
+        publisher.publish(destination, envelope);
+
+        // Assert
+        ArgumentCaptor<PublishRequest> requestCaptor = ArgumentCaptor.forClass(PublishRequest.class);
+        verify(snsClient).publish(requestCaptor.capture());
+
+        PublishRequest capturedRequest = requestCaptor.getValue();
+        assertEquals(topicArn, capturedRequest.topicArn());
+        assertTrue(capturedRequest.message().contains("Hello SNS Payload"));
     }
 }

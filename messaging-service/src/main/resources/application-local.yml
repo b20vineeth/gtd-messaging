@@ -1,0 +1,11 @@
+spring:
+  config:
+    activate:
+      on-profile: local
+
+gtd:
+  messaging:
+    endpoint: http://localhost:4566
+    region: us-east-1
+    access-key: test
+    secret-key: test

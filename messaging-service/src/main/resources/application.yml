@@ -1,0 +1,29 @@
+spring:
+  application:
+    name: messaging-service
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:local}
+  main:
+    web-application-type: none
+  jackson:
+    property-naming-strategy: SNAKE_CASE
+
+logging:
+  level:
+    com.gotrustdeal: DEBUG
+
+gtd:
+  messaging:
+    provider: sqs
+    consumer:
+      enabled: true
+      poll-delay-ms: 2000
+      max-number-of-messages: 10
+      wait-time-seconds: 10
+    destinations:
+      verificationemail-requests:
+        queue-name: verificationemail
+        consume-enabled: true
+      message-requests:
+        queue-name: message-requests
+        consume-enabled: false

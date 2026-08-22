@@ -8,6 +8,8 @@ import com.gotrustdeal.messaging.exception.DestinationResolutionException;
 import com.gotrustdeal.messaging.exception.MessagingException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import software.amazon.awssdk.services.sns.SnsClient;
+import software.amazon.awssdk.services.sns.model.PublishRequest;
 import software.amazon.awssdk.services.sqs.SqsClient;
 import software.amazon.awssdk.services.sqs.model.GetQueueUrlRequest;
 import software.amazon.awssdk.services.sqs.model.SendMessageRequest;
@@ -16,14 +18,15 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * AWS SQS Implementation of the MessagePublisher contract.
- * Resolves logical destinations to physical SQS queues and publishes JSON-serialized event envelopes.
+ * AWS SQS/SNS Implementation of the MessagePublisher contract.
+ * Resolves logical destinations to physical SQS queues or SNS topics and publishes JSON-serialized event envelopes.
  */
 @Slf4j
 @RequiredArgsConstructor
 public class SqsMessagePublisher implements MessagePublisher {
 
     private final SqsClient sqsClient;
+    private final SnsClient snsClient;
     private final AwsMessagingProperties properties;
     private final ObjectMapper objectMapper;
     private final Map<String, String> queueUrlCache = new ConcurrentHashMap<>();
@@ -37,7 +40,18 @@ public class SqsMessagePublisher implements MessagePublisher {
             throw new IllegalArgumentException("Event envelope cannot be null");
         }
 
+        AwsMessagingProperties.DestinationProperties destProps = properties.getDestinations().get(destination);
+        if (destProps != null && destProps.getTopicArn() != null && !destProps.getTopicArn().trim().isEmpty()) {
+            publishToSns(destProps.getTopicArn().trim(), envelope, destination);
+            return;
+        }
+
         String queueUrl = resolveQueueUrl(destination);
+        String queueName = queueUrl.substring(queueUrl.lastIndexOf('/') + 1);
+
+        log.info("Publishing event to SQS. destination={}, queue={}, eventId={}, eventType={}",
+                destination, queueName, envelope.eventId(), envelope.eventType());
+
         try {
             String jsonPayload = objectMapper.writeValueAsString(envelope);
             
@@ -55,10 +69,16 @@ public class SqsMessagePublisher implements MessagePublisher {
                     .build();
 
             sqsClient.sendMessage(request);
+
+            log.info("Event published to SQS successfully. destination={}, queue={}, eventId={}",
+                    destination, queueName, envelope.eventId());
         } catch (DestinationResolutionException e) {
+            log.error("Failed to publish event to SQS. destination={}, eventId={}, eventType={}",
+                    destination, envelope.eventId(), envelope.eventType(), e);
             throw e;
         } catch (Exception e) {
-            log.error("Failed to publish message to SQS destination [{}]: {}", destination, e.getMessage(), e);
+            log.error("Failed to publish event to SQS. destination={}, eventId={}, eventType={}",
+                    destination, envelope.eventId(), envelope.eventType(), e);
             throw new MessagingException("Failed to publish message to SQS queue: " + queueUrl, e);
         }
     }
@@ -90,6 +110,36 @@ public class SqsMessagePublisher implements MessagePublisher {
             return sqsClient.getQueueUrl(request).queueUrl();
         } catch (Exception e) {
             throw new DestinationResolutionException("Failed to resolve SQS queue URL for queue name: " + queueName, e);
+        }
+    }
+
+    private void publishToSns(String topicArn, EventEnvelope<?> envelope, String destination) {
+        log.info("Publishing event to SNS. destination={}, topicArn={}, eventId={}, eventType={}",
+                destination, topicArn, envelope.eventId(), envelope.eventType());
+
+        try {
+            String jsonPayload = objectMapper.writeValueAsString(envelope);
+            
+            if (log.isDebugEnabled()) {
+                log.debug("Publishing message to SNS topic [{}], payload: {}", topicArn, jsonPayload);
+            } else {
+                log.info("Publishing message to SNS topic [{}], eventId: {}, eventType: {}, correlationId: {}",
+                        topicArn, envelope.eventId(), envelope.eventType(), envelope.correlationId());
+            }
+
+            PublishRequest request = PublishRequest.builder()
+                    .topicArn(topicArn)
+                    .message(jsonPayload)
+                    .build();
+
+            snsClient.publish(request);
+
+            log.info("Event published to SNS successfully. destination={}, topicArn={}, eventId={}",
+                    destination, topicArn, envelope.eventId());
+        } catch (Exception e) {
+            log.error("Failed to publish event to SNS. destination={}, eventId={}, eventType={}",
+                    destination, envelope.eventId(), envelope.eventType(), e);
+            throw new MessagingException("Failed to publish message to SNS topic: " + topicArn, e);
         }
     }
 
